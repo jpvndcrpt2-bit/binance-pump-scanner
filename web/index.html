@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>اسکنر پامپ فیوچرز بایننس</title>
+<meta name="description" content="کوین‌های فیوچرز بایننس با کندل روزانه بالای ۵۰٪ و سرنخ دلیل رشد">
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--card:#f4f5f7;--mut:#666;--up:#0a8f4d;--tag:#e6eefc;--warn:#b45309;--bd:#d9dce1;--btn:#1a1a1a;--btnfg:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#121212;--fg:#eee;--card:#1e1e1e;--mut:#9a9a9a;--up:#37d67a;--tag:#23314d;--warn:#f59e0b;--bd:#333;--btn:#eee;--btnfg:#111}}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:16px/1.7 Tahoma,Vazirmatn,system-ui,sans-serif;margin:0;padding:16px;max-width:900px;margin-inline:auto}
+h1{font-size:1.35rem;margin:.2em 0}
+form{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;background:var(--card);padding:12px;border-radius:10px}
+label{display:flex;flex-direction:column;font-size:.85rem;color:var(--mut);gap:2px}
+input,select,button{font:inherit;padding:6px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg);min-width:0}
+button{background:var(--btn);color:var(--btnfg);border:0;cursor:pointer;align-self:end;font-weight:600}
+button:disabled{opacity:.5;cursor:wait}
+details{grid-column:1/-1;font-size:.9rem;color:var(--mut)}
+#status{color:var(--mut);margin:.8em 0}
+#err{background:#fde8e8;color:#8a1c1c;padding:10px 12px;border-radius:8px}
+.card{background:var(--card);border-radius:10px;padding:10px 16px;margin:14px 0}
+h2{margin:.2em 0;font-size:1.15rem;direction:ltr;text-align:right}
+.up{color:var(--up)}.meta,.desc,.note{color:var(--mut)}.meta{font-size:.9rem}
+.tag{background:var(--tag);border-radius:6px;padding:1px 8px;font-size:.82em;margin-inline-end:4px;display:inline-block}
+.warn{color:var(--warn)}a{color:inherit}.links{font-size:.92rem}
+footer{color:var(--mut);font-size:.85rem;margin-top:24px;border-top:1px solid var(--bd);padding-top:10px}
+</style>
+</head>
+<body>
+<h1>اسکنر پامپ فیوچرز بایننس</h1>
+<form id="form">
+  <label>حداقل رشد روزانه (٪)<input id="minPct" type="number" min="1" step="1" inputmode="decimal"></label>
+  <label>معیار<select id="metric"><option value="close">بسته‌شدن نسبت به باز</option><option value="high">سقف نسبت به باز</option></select></label>
+  <label>حداقل حجم ($)<input id="minVol" type="number" min="0" step="100000" inputmode="numeric"></label>
+  <label>روز (UTC)، خالی = امروز<input id="date" type="date"></label>
+  <label>به‌روزرسانی خودکار<select id="refresh"><option value="0">خاموش</option><option value="5">هر ۵ دقیقه</option><option value="15">هر ۱۵ دقیقه</option></select></label>
+  <button id="go" type="submit">اسکن</button>
+  <details><summary>تنظیمات پیشرفته</summary>
+    <label>آدرس API فیوچرز بایننس<input id="base" dir="ltr" type="url"></label></details>
+</form>
+<p id="status" role="status"></p>
+<p id="err" hidden></p>
+<main id="results"></main>
+<footer>
+  داده از API عمومی بایننس و CoinGecko مستقیماً در مرورگر خودت خوانده می‌شود؛ هیچ سروری وسط نیست و چیزی ذخیره نمی‌شود.
+  کندل روزانه بایننس ساعت ۰۳:۰۰ بغداد شروع می‌شود. خبرها و دلیل رشد «سرنخ» هستند، نه اثبات؛ شبکه‌های اجتماعی خودکار خوانده نمی‌شوند و فقط لینک جست‌وجو دارند.
+  پامپ بدون خبر معمولاً نقدینگی کم یا دستکاری است. توصیهٔ مالی نیست.
+</footer>
+<script src="app.js"></script>
+</body>
+</html>

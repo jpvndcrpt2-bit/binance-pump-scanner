@@ -1,0 +1,8 @@
+{
+  "min_change_pct": 50,
+  "metric": "close",
+  "min_quote_volume_usd": 500000,
+  "news_days": 3,
+  "max_news": 6,
+  "telegram": {"token": "", "chat_id": ""}
+}
