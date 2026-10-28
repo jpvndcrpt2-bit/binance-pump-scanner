@@ -212,5 +212,73 @@ class EndToEnd(unittest.TestCase):
         self.assertNotIn("javascript:", page)
 
 
+TG_PAGE = """<html><body>
+<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message"><div class="tgme_widget_message_text js-message_text" dir="auto">#AIN pumping <b>+120%</b> on Binance Futures<br/>watch $AIN</div><div class="tgme_widget_message_footer"><a class="tgme_widget_message_date" href="https://t.me/goodchan/11"><time datetime="2026-10-27T10:00:00+00:00" class="time">10:00</time></a></div></div></div>
+<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message"><div class="tgme_widget_message_text js-message_text" dir="auto">BRAIN and AINU unrelated</div><div class="tgme_widget_message_footer"><a class="tgme_widget_message_date" href="https://t.me/goodchan/12"><time datetime="2026-10-27T11:00:00+00:00">11:00</time></a></div></div></div>
+<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message"><div class="tgme_widget_message_text js-message_text" dir="auto">AINUSDT old post</div><div class="tgme_widget_message_footer"><a class="tgme_widget_message_date" href="https://t.me/goodchan/3"><time datetime="2026-09-01T11:00:00+00:00">old</time></a></div></div></div>
+<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message"><div class="tgme_widget_message_footer"><a class="tgme_widget_message_date" href="https://t.me/goodchan/4">photo only, no text</a></div></div></div>
+</body></html>"""
+
+
+class NewSources(unittest.TestCase):
+    def test_cryptopanic_off_without_key(self):
+        self.assertIsNone(pump.cryptopanic("AIN", CFG, lambda u, **k: 1 / 0))
+
+    def test_cryptopanic_parses_and_never_leaks_token(self):
+        cfg = dict(CFG, cryptopanic_token="SECRET123")
+        seen = []
+
+        def get(url, **kw):
+            seen.append(url)
+            return {"results": [{"title": "AIN listed", "url": "https://x.example/a", "published_at": "2026-10-27T09:00:00Z",
+                                 "source": {"title": "CoinDesk"}},
+                                {"title": "No link item", "source": "plain", "created_at": "2026-10-27"},
+                                {"title": "", "url": "https://skip"}]}
+        r = pump.cryptopanic("1000AIN", cfg, get)
+        self.assertEqual([p["title"] for p in r], ["AIN listed", "No link item"])
+        self.assertEqual(r[0]["source"], "CoinDesk")
+        self.assertEqual(r[1]["link"], "")
+        self.assertIn("currencies=AIN", seen[0])
+
+        def boom(url, **kw):
+            raise pump.ApiError("401")
+        self.assertEqual(pump.cryptopanic("AIN", cfg, boom), [])
+
+    def test_telegram_parse_and_match(self):
+        msgs = pump.fetch_telegram(["@goodchan", "bad name!", "x"], lambda u, *a, **k: TG_PAGE)
+        self.assertEqual(len(msgs), 6 - 3 + 0)                 # 3 valid messages (photo-only skipped); 1 valid channel
+        self.assertTrue(all(m["channel"] == "goodchan" for m in msgs))
+        hit = pump.match_telegram(msgs, "AIN", 3, NOW_MS, 4)
+        self.assertEqual([m["link"] for m in hit], ["https://t.me/goodchan/11"])   # not BRAIN/AINU, not 2-month-old
+        self.assertIn("watch $AIN", hit[0]["text"])
+        self.assertEqual(pump.match_telegram(msgs, "AIN", 90, NOW_MS, 4)[-1]["link"], "https://t.me/goodchan/3")  # AINUSDT form
+
+    def test_telegram_channel_failure_is_soft(self):
+        def boom(u, *a, **k):
+            raise pump.ApiError("x")
+        self.assertEqual(pump.fetch_telegram(["goodchan"], boom), [])
+
+    def test_run_once_includes_new_sources(self):
+        cfg = dict(CFG, cryptopanic_token="K", telegram_channels=["goodchan"])
+
+        def get(url, **kw):
+            if "cryptopanic" in url:
+                return {"results": [{"title": "AIN <b>news</b>", "url": "https://cp.example/1", "source": {"title": "CP"}}]}
+            return fake_get(url)
+
+        def text(url, *a, **k):
+            return TG_PAGE if "t.me" in url else RSS
+        with tempfile.TemporaryDirectory() as d:
+            shown, new, rp, _, _ = pump.run_once(cfg, None, d, {}, True, get, text, lambda s: None, NOW)
+            h = shown[0]
+            self.assertIn("خبر CryptoPanic", h["tags"])
+            self.assertIn("ذکر در تلگرام", h["tags"])
+            with open(rp, encoding="utf-8") as f:
+                page = f.read()
+            self.assertIn("https://t.me/goodchan/11", page)
+            self.assertIn("&lt;b&gt;news&lt;/b&gt;", page)         # untrusted title escaped
+            self.assertNotIn("K&", page)
+
+
 if __name__ == "__main__":
     unittest.main()

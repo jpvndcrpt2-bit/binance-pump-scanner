@@ -4,5 +4,8 @@
   "min_quote_volume_usd": 500000,
   "news_days": 3,
   "max_news": 6,
+  "telegram_channels": ["binance_announcements"],
+  "telegram_days": 3,
+  "cryptopanic_token": "",
   "telegram": {"token": "", "chat_id": ""}
 }

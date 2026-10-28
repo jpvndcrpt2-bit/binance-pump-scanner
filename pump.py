@@ -39,6 +39,11 @@ DEFAULTS = {
     "new_listing_days": 14,
     "coingecko_delay_s": 2.5,        # free API is rate limited
     "telegram": {"token": "", "chat_id": ""},   # optional: push a short message for new hits
+    "cryptopanic_token": "",         # optional API key (the API may need a paid plan); empty = off
+    "cryptopanic_url": "https://cryptopanic.com/api/developer/v2/posts/",
+    "telegram_channels": ["binance_announcements"],   # PUBLIC channels, read from t.me/s/<name>; add your own
+    "telegram_days": 3,
+    "telegram_max": 4,
 }
 
 
@@ -267,6 +272,70 @@ def google_news(terms, cfg, get_text=fetch_text):
     return out
 
 
+def cryptopanic(base, cfg, get=fetch_json):
+    """None = disabled (no key). [] = asked but nothing / failed. Else a list of posts."""
+    if not cfg["cryptopanic_token"]:
+        return None
+    q = urllib.parse.urlencode({"auth_token": cfg["cryptopanic_token"], "currencies": clean_base(base),
+                                "public": "true"})
+    try:
+        data = get(cfg["cryptopanic_url"] + "?" + q)
+    except Exception:
+        return []
+    out = []
+    for p in (data.get("results") or []) if isinstance(data, dict) else []:
+        title = p.get("title")
+        if not title:
+            continue
+        src = p.get("source")
+        link = p.get("url") or p.get("original_url") or ""
+        out.append({"title": title, "link": link if str(link).startswith("http") else "",
+                    "date": str(p.get("published_at") or p.get("created_at") or "")[:19],
+                    "source": (src.get("title") if isinstance(src, dict) else src) or p.get("domain") or ""})
+        if len(out) >= cfg["max_news"]:
+            break
+    return out
+
+
+_TG_WRAP = re.compile(r'<div class="tgme_widget_message_wrap.*?(?=<div class="tgme_widget_message_wrap|\Z)', re.S)
+_TG_TEXT = re.compile(r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', re.S)
+_TG_LINK = re.compile(r'<a class="tgme_widget_message_date" href="([^"]+)"')
+_TG_TIME = re.compile(r'<time datetime="([^"]+)"')
+
+
+def fetch_telegram(channels, get_text=fetch_text):
+    """Recent posts of PUBLIC channels via the t.me/s/<name> preview page. Fails softly per channel."""
+    msgs = []
+    for ch in channels:
+        ch = str(ch).strip().lstrip("@")
+        if not re.fullmatch(r"[A-Za-z0-9_]{4,64}", ch):
+            continue
+        try:
+            page = get_text("https://t.me/s/" + ch, 2)
+        except Exception:
+            continue
+        for blk in _TG_WRAP.findall(page):
+            tm, lm, dm = _TG_TEXT.search(blk), _TG_LINK.search(blk), _TG_TIME.search(blk)
+            if not (tm and lm):
+                continue
+            try:
+                ts = int(dt.datetime.fromisoformat(dm.group(1)).timestamp() * 1000) if dm else 0
+            except ValueError:
+                ts = 0
+            msgs.append({"channel": ch, "link": html.unescape(lm.group(1)), "ts": ts,
+                         "text": strip_tags(re.sub(r"<br\s*/?>", " ", tm.group(1)))})
+    return msgs
+
+
+def match_telegram(msgs, base, days, now_ms, limit):
+    sym = clean_base(base)
+    pat = re.compile(r"(?<![A-Za-z0-9])[#$]?(?:%s|%s)(?:USDT)?(?![A-Za-z0-9])" % (re.escape(base), re.escape(sym)))
+    cutoff = now_ms - days * 86400 * 1000
+    hits = [m for m in msgs if m["ts"] >= cutoff and pat.search(m["text"])]
+    hits.sort(key=lambda m: -m["ts"])
+    return [dict(m, text=m["text"][:220]) for m in hits[:limit]]
+
+
 def social_links(base, cg):
     sym = clean_base(base)
     q = urllib.parse.quote("$" + sym)
@@ -300,14 +369,21 @@ def make_tags(h, cg, anns, news, cfg, now_ms):
     return tags
 
 
-def enrich(h, cfg, ann_items, now_ms, get=fetch_json, get_text=fetch_text, sleep=time.sleep, news=True):
+def enrich(h, cfg, ann_items, now_ms, get=fetch_json, get_text=fetch_text, sleep=time.sleep, news=True, tg_msgs=()):
     h.update(futures_context(cfg, h["symbol"], get))
     cg = coingecko(h["base"], cfg, get, sleep) if news else None
     anns = match_announcements(ann_items, h["base"], cfg["news_days"] + 4, now_ms)
     items = google_news([cg["name"] if cg else None, clean_base(h["base"])], cfg, get_text) if news else []
+    cp = cryptopanic(h["base"], cfg, get) if news else None
+    tg = match_telegram(tg_msgs, h["base"], cfg["telegram_days"], now_ms, cfg["telegram_max"]) if news else []
     h["coingecko"], h["announcements"], h["news"] = cg, anns, items
+    h["cryptopanic"], h["telegram"] = cp or [], tg
     h["links"] = social_links(h["base"], cg)
-    h["tags"] = make_tags(h, cg, anns, items, cfg, now_ms)
+    h["tags"] = make_tags(h, cg, anns, items + (cp or []) + tg, cfg, now_ms)
+    if cp:
+        h["tags"].insert(0, "خبر CryptoPanic")
+    if tg:
+        h["tags"].insert(0, "ذکر در تلگرام")
     return h
 
 
@@ -355,6 +431,15 @@ def card(h):
         rows.append("<h3>خبرهای اخیر (Google News)</h3><ul>%s</ul>" % "".join(
             "<li><a href='%s' target='_blank' rel='noopener'>%s</a> <small>%s</small></li>" % (
                 safe_url(n["link"]), e(n["title"]), e(n["date"])) for n in h["news"]))
+    if h.get("cryptopanic"):
+        rows.append("<h3>CryptoPanic</h3><ul>%s</ul>" % "".join(
+            "<li>%s <small>%s %s</small></li>" % (
+                "<a href='%s' target='_blank' rel='noopener'>%s</a>" % (safe_url(n["link"]), e(n["title"]))
+                if n["link"] else e(n["title"]), e(n["source"]), e(n["date"])) for n in h["cryptopanic"]))
+    if h.get("telegram"):
+        rows.append("<h3>تلگرام (کانال‌های عمومی)</h3><ul>%s</ul>" % "".join(
+            "<li><a href='%s' target='_blank' rel='noopener'>@%s</a>: %s</li>" % (
+                safe_url(m["link"]), e(m["channel"]), e(m["text"])) for m in h["telegram"]))
     rows.append("<p class='links'>%s</p>" % " · ".join(
         "<a href='%s' target='_blank' rel='noopener'>%s</a>" % (safe_url(u), e(n)) for n, u in h["links"]))
     return "<section class='card'>%s</section>" % "".join(rows)
@@ -395,7 +480,8 @@ def telegram(cfg, text, post=None):
 
 
 def summary_line(h):
-    top = (h["news"] or [{"title": ""}])[0]["title"] or ("; ".join(h["tags"]))
+    first = (h["news"] or h.get("cryptopanic") or [{"title": ""}])[0]["title"]
+    top = first or (h.get("telegram") or [{"text": ""}])[0]["text"] or "; ".join(h["tags"])
     return "%s +%.1f%% | %s" % (h["symbol"], h["change_pct"], top)
 
 
@@ -407,13 +493,14 @@ def run_once(cfg, date, out_dir, cache, news=True, get=fetch_json, get_text=fetc
     symbols = list_symbols(cfg, get)
     hits, errors = scan(cfg, symbols, date, get)
     ann = binance_announcements(get) if (news and hits) else []
+    tg_msgs = fetch_telegram(cfg["telegram_channels"], get_text) if (news and hits and cfg["telegram_channels"]) else []
     new = []
     for h in hits:
         key = h["symbol"]
         if key in cache:
             cache[key].update({k: h[k] for k in ("change_pct", "high_pct", "close", "high", "quote_vol")})
             continue
-        cache[key] = enrich(h, cfg, ann, now_ms, get, get_text, sleep, news)
+        cache[key] = enrich(h, cfg, ann, now_ms, get, get_text, sleep, news, tg_msgs)
         new.append(cache[key])
     day = date or now.date()
     shown = sorted((cache[h["symbol"]] for h in hits), key=lambda x: -x["change_pct"])
