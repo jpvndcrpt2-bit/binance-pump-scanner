@@ -266,7 +266,7 @@ def window(ev, delay, hours):
 
 def study_cell(events, delay, days, tol_pct):
     """Stats for entering `delay` hours after the anchor candle close and watching `days` days."""
-    n = full = half = down = squeeze20 = 0
+    n = full = half = half_n = down = squeeze20 = 0
     rets = []
     for ev in events:
         w = window(ev, delay, days * 24)
@@ -282,11 +282,14 @@ def study_cell(events, delay, days, tol_pct):
         hi = max(b[2] for b in w[1])
         height = f["peak"] - base
         full += lo <= base * (1 + tol_pct / 100)
-        half += lo <= f["peak"] - 0.5 * height
+        level50 = f["peak"] - 0.5 * height
+        if pe > level50:                       # only count "half given back" if it had NOT already happened at entry
+            half_n += 1
+            half += lo <= level50
         down += w[1][-1][4] < pe
         squeeze20 += hi >= pe * 1.20
         rets.append((pe - w[1][-1][4]) / pe * 100)
-    return {"n": n, "full": full, "half": half, "down": down, "squeeze20": squeeze20,
+    return {"n": n, "full": full, "half": half, "half_n": half_n, "down": down, "squeeze20": squeeze20,
             "median_short_ret": quantile(rets, 0.5), "mean_short_ret": statistics.mean(rets) if rets else None}
 
 
@@ -298,11 +301,11 @@ def study(events, tol_pct=3.0, delays=(0, 2, 4, 6, 8, 12, 24), days=(1, 2, 3, 4,
                      "rows": [["", "share of events"]] + [[c, prop_text(k, len(htp))] for c, k in cum] +
                              [["median / 25% / 75% hours to peak", "%.1f / %.1f / %.1f" % (quantile(htp, .5), quantile(htp, .25), quantile(htp, .75))]]})
     for d in days:
-        rows = [["entry delay (h)", "n", "gave back ALL (<= base+%.0f%%)" % tol_pct, "gave back HALF of the pump",
+        rows = [["entry delay (h)", "n", "gave back ALL (<= base+%.0f%%)" % tol_pct, "gave back HALF of the pump (if still above half at entry)",
                  "lower at end", "squeeze >= +20% on entry", "median short return %"]]
         for dl in delays:
             c = study_cell(events, dl, d, tol_pct)
-            rows.append([dl, c["n"], prop_text(c["full"], c["n"]), prop_text(c["half"], c["n"]), prop_text(c["down"], c["n"]),
+            rows.append([dl, c["n"], prop_text(c["full"], c["n"]), prop_text(c["half"], c["half_n"]), prop_text(c["down"], c["n"]),
                          prop_text(c["squeeze20"], c["n"]),
                          "-" if c["median_short_ret"] is None else "%.1f" % c["median_short_ret"]])
         sections.append({"title": "Watching %d day(s) after entry" % d, "rows": rows})
@@ -456,7 +459,7 @@ def predict_table(events, change, delay, tol_pct):
              "squeeze >= +20% first"]]
     for d in (1, 2, 4, 7):
         c = study_cell(pool, delay, d, tol_pct)
-        rows.append(["%d day(s)" % d, prop_text(c["full"], c["n"]), prop_text(c["half"], c["n"]), prop_text(c["down"], c["n"]),
+        rows.append(["%d day(s)" % d, prop_text(c["full"], c["n"]), prop_text(c["half"], c["half_n"]), prop_text(c["down"], c["n"]),
                      prop_text(c["squeeze20"], c["n"])])
     return desc, len(pool), rows
 

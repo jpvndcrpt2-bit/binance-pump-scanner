@@ -140,10 +140,16 @@ class Study(unittest.TestCase):
         # 24h window: lowest low = 149-23-0.5 = 125.5 ; half level = 160-30 = 130 -> yes ; all (<=103) -> no
         self.assertEqual((one["n"], one["full"], one["half"], one["down"], one["squeeze20"]), (1, 0, 1, 1, 0))
         self.assertAlmostEqual(one["median_short_ret"], (150 - 126) / 150 * 100, places=6)     # 16.0
+        self.assertEqual(one["half_n"], 1)
         two = A.study_cell(evs, 4, 2, 3.0)
         # 48h window: lowest low = 149-47-0.5 = 101.5 <= 103 (base+3%) -> gave back everything
         self.assertEqual(two["full"], 1)
         self.assertEqual(A.study_cell(evs, 4, 2, 1.0)["full"], 0)                               # 101.5 > 101 with tol 1%
+
+    def test_half_not_counted_when_already_given_back_at_entry(self):
+        # entry at 120 is already below the half level 130 -> excluded from the "half" denominator
+        c = A.study_cell([mk_event(entry_open=120.0)], 4, 2, 3.0)
+        self.assertEqual((c["n"], c["half_n"], c["half"]), (1, 0, 0))
 
     def test_incomplete_and_below_base_are_not_counted(self):
         evs = [mk_event(n_after=30), mk_event(entry_open=99.0)]
