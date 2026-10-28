@@ -316,5 +316,18 @@ class Translate(unittest.TestCase):
             self.assertIn("AIN pumps on partnership", page)                  # original kept
 
 
+class Journal(unittest.TestCase):
+    def test_journal_rows_and_dedupe(self):
+        with tempfile.TemporaryDirectory() as d:
+            pump._TR.clear()
+            pump.run_once(CFG, None, d, {}, True, fake_get, fake_text, lambda s: None, NOW)
+            pump.run_once(CFG, None, d, {}, True, fake_get, fake_text, lambda s: None, NOW)     # fresh cache -> same hit again
+            with open(os.path.join(d, "journal.csv"), encoding="utf-8-sig", newline="") as f:
+                rows = list(__import__("csv").DictReader(f))
+            self.assertEqual(len(rows), 1)                                   # not duplicated
+            self.assertEqual((rows[0]["symbol"], rows[0]["date"], rows[0]["auto_reason"]), ("AINUSDT", "2026-10-27", "yes"))
+            self.assertIn("لیست جدید", rows[0]["tags"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ Public endpoints only. No API keys. Places no orders. Python 3.8+ standard libra
 import argparse
 import calendar
 import concurrent.futures as cf
+import csv
 import datetime as dt
 import html
 import json
@@ -527,6 +528,26 @@ def summary_line(h):
 
 # ----------------------------------------------------------------------------- run
 
+def append_journal(path, day, hits):
+    """One row per new hit: feeds antipump.py --labels. auto_reason is a rough guess (news/listing found = yes)."""
+    if not hits:
+        return
+    seen = set()
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            seen = {(r.get("date"), r.get("symbol")) for r in csv.DictReader(f)}
+    fresh = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        if fresh:
+            w.writerow(["date", "symbol", "change_pct", "auto_reason", "tags"])
+        for h in hits:
+            if (day, h["symbol"]) in seen:
+                continue
+            quiet = "خبر/اعلانی پیدا نشد" in h["tags"] and "لیست جدید در فیوچرز" not in h["tags"]
+            w.writerow([day, h["symbol"], h["change_pct"], "no" if quiet else "yes", "; ".join(h["tags"])])
+
+
 def run_once(cfg, date, out_dir, cache, news=True, get=fetch_json, get_text=fetch_text, sleep=time.sleep, now=None):
     now = now or dt.datetime.now(dt.timezone.utc)
     now_ms = int(now.timestamp() * 1000)
@@ -546,6 +567,7 @@ def run_once(cfg, date, out_dir, cache, news=True, get=fetch_json, get_text=fetc
     shown = sorted((cache[h["symbol"]] for h in hits), key=lambda x: -x["change_pct"])
     folder = os.path.join(out_dir, day.isoformat())
     os.makedirs(folder, exist_ok=True)
+    append_journal(os.path.join(out_dir, "journal.csv"), day.isoformat(), new)
     rp = os.path.join(folder, "report.html")
     with open(rp, "w", encoding="utf-8") as f:
         f.write(build_report(shown, cfg, day.isoformat(), now.strftime("%Y-%m-%d %H:%M")))
