@@ -280,5 +280,41 @@ class NewSources(unittest.TestCase):
             self.assertNotIn("K&", page)
 
 
+class Translate(unittest.TestCase):
+    def test_translate_parse_skip_and_fallback(self):
+        calls = []
+
+        def gt(url, *a, **k):
+            calls.append(url)
+            return json.dumps([[["سلام ", "hello ", None, None, 1], ["دنیا", "world", None, None, 1]], None, "en"])
+        cache = {}
+        self.assertEqual(pump.translate_fa("hello world", CFG, gt, cache), "سلام دنیا")
+        self.assertEqual(pump.translate_fa("hello world", CFG, gt, cache), "سلام دنیا")
+        self.assertEqual(len(calls), 1)                                    # cached
+        self.assertIsNone(pump.translate_fa("سلام", CFG, gt, {}))           # already Persian
+        self.assertIsNone(pump.translate_fa("", CFG, gt, {}))
+        self.assertIsNone(pump.translate_fa("x y", dict(CFG, translate_fa=False), gt, {}))
+        self.assertIsNone(pump.translate_fa("boom", CFG, lambda u, *a, **k: 1 / 0, {}))   # failure -> None
+
+    def test_report_shows_persian_then_original(self):
+        def text(url, *a, **k):
+            if "translate.googleapis.com" in url:
+                return json.dumps([[["ترجمه‌شده <b>", "x", None, None, 1]], None, "en"])
+            return TG_PAGE if "t.me" in url else RSS
+        cfg = dict(CFG, telegram_channels=["goodchan"])
+        pump._TR.clear()
+        with tempfile.TemporaryDirectory() as d:
+            shown, _, rp, _, _ = pump.run_once(cfg, None, d, {}, True, fake_get, text, lambda s: None, NOW)
+            h = shown[0]
+            self.assertEqual(h["news"][0]["fa"], "ترجمه‌شده <b>")
+            self.assertTrue(h["telegram"][0]["fa"])
+            self.assertTrue(h["coingecko"]["description_fa"])
+            with open(rp, encoding="utf-8") as f:
+                page = f.read()
+            self.assertIn("ترجمه‌شده &lt;b&gt;", page)                       # escaped
+            self.assertIn("class='orig'", page)
+            self.assertIn("AIN pumps on partnership", page)                  # original kept
+
+
 if __name__ == "__main__":
     unittest.main()

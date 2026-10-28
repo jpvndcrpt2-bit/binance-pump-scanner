@@ -44,6 +44,7 @@ DEFAULTS = {
     "telegram_channels": ["binance_announcements"],   # PUBLIC channels, read from t.me/s/<name>; add your own
     "telegram_days": 3,
     "telegram_max": 4,
+    "translate_fa": True,            # translate collected text to Persian (unofficial Google endpoint; falls back to original)
 }
 
 
@@ -336,6 +337,36 @@ def match_telegram(msgs, base, days, now_ms, limit):
     return [dict(m, text=m["text"][:220]) for m in hits[:limit]]
 
 
+GT = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=fa&dt=t&q="
+_TR = {}
+
+
+def translate_fa(text, cfg, get_text=fetch_text, cache=_TR):
+    """Persian translation or None (disabled / already Persian / failed). Never raises."""
+    text = (text or "").strip()
+    if not text or not cfg.get("translate_fa") or re.search(r"[\u0600-\u06FF]", text):
+        return None
+    if text in cache:
+        return cache[text]
+    try:
+        data = json.loads(get_text(GT + urllib.parse.quote(text[:900])))
+        out = "".join(seg[0] for seg in data[0] if seg and seg[0]).strip()
+    except Exception:
+        out = ""
+    cache[text] = out or None
+    return cache[text]
+
+
+def add_translations(h, cfg, get_text):
+    for items, key in ((h["news"], "title"), (h["announcements"], "title"), (h["cryptopanic"], "title"),
+                       (h["telegram"], "text")):
+        for it in items:
+            it["fa"] = translate_fa(it[key], cfg, get_text)
+    cg = h.get("coingecko")
+    if cg and cg.get("description"):
+        cg["description_fa"] = translate_fa(cg["description"], cfg, get_text)
+
+
 def social_links(base, cg):
     sym = clean_base(base)
     q = urllib.parse.quote("$" + sym)
@@ -379,6 +410,8 @@ def enrich(h, cfg, ann_items, now_ms, get=fetch_json, get_text=fetch_text, sleep
     h["coingecko"], h["announcements"], h["news"] = cg, anns, items
     h["cryptopanic"], h["telegram"] = cp or [], tg
     h["links"] = social_links(h["base"], cg)
+    if news:
+        add_translations(h, cfg, get_text)
     h["tags"] = make_tags(h, cg, anns, items + (cp or []) + tg, cfg, now_ms)
     if cp:
         h["tags"].insert(0, "خبر CryptoPanic")
@@ -406,6 +439,13 @@ def fmt_usd(x):
     return "%.0f" % x
 
 
+def bi(text, fa):
+    """Persian first, original small underneath."""
+    if fa:
+        return "%s<span class='orig' dir='ltr'>%s</span>" % (e(fa), e(text))
+    return e(text)
+
+
 def card(h):
     cg = h.get("coingecko")
     rows = ["<h2>%s <span class='up'>+%.1f%%</span></h2>" % (e(h["symbol"]), h["change_pct"]),
@@ -419,27 +459,27 @@ def card(h):
             e(cg["name"]), " (رتبه %s)" % e(cg["rank"]) if cg.get("rank") else "", fmt_usd(cg.get("mcap_usd")),
             " · دسته‌ها: " + e("، ".join(cg["categories"])) if cg["categories"] else ""))
         if cg["description"]:
-            rows.append("<p class='desc'>%s</p>" % e(cg["description"]))
+            rows.append("<p class='desc'>%s</p>" % bi(cg["description"], cg.get("description_fa")))
         if cg["ambiguous"]:
             rows.append("<p class='warn'>نمادهای هم‌نام: %s</p>" % e("، ".join(
                 "%s (%s)" % (o["name"], o["id"]) for o in cg["others"])))
     if h["announcements"]:
         rows.append("<h3>اعلان‌های بایننس</h3><ul>%s</ul>" % "".join(
-            "<li><a href='%s' target='_blank' rel='noopener'>%s</a></li>" % (safe_url(a["link"]), e(a["title"]))
+            "<li><a href='%s' target='_blank' rel='noopener'>%s</a></li>" % (safe_url(a["link"]), bi(a["title"], a.get("fa")))
             for a in h["announcements"]))
     if h["news"]:
         rows.append("<h3>خبرهای اخیر (Google News)</h3><ul>%s</ul>" % "".join(
             "<li><a href='%s' target='_blank' rel='noopener'>%s</a> <small>%s</small></li>" % (
-                safe_url(n["link"]), e(n["title"]), e(n["date"])) for n in h["news"]))
+                safe_url(n["link"]), bi(n["title"], n.get("fa")), e(n["date"])) for n in h["news"]))
     if h.get("cryptopanic"):
         rows.append("<h3>CryptoPanic</h3><ul>%s</ul>" % "".join(
             "<li>%s <small>%s %s</small></li>" % (
-                "<a href='%s' target='_blank' rel='noopener'>%s</a>" % (safe_url(n["link"]), e(n["title"]))
-                if n["link"] else e(n["title"]), e(n["source"]), e(n["date"])) for n in h["cryptopanic"]))
+                "<a href='%s' target='_blank' rel='noopener'>%s</a>" % (safe_url(n["link"]), bi(n["title"], n.get("fa")))
+                if n["link"] else bi(n["title"], n.get("fa")), e(n["source"]), e(n["date"])) for n in h["cryptopanic"]))
     if h.get("telegram"):
         rows.append("<h3>تلگرام (کانال‌های عمومی)</h3><ul>%s</ul>" % "".join(
             "<li><a href='%s' target='_blank' rel='noopener'>@%s</a>: %s</li>" % (
-                safe_url(m["link"]), e(m["channel"]), e(m["text"])) for m in h["telegram"]))
+                safe_url(m["link"]), e(m["channel"]), bi(m["text"], m.get("fa"))) for m in h["telegram"]))
     rows.append("<p class='links'>%s</p>" % " · ".join(
         "<a href='%s' target='_blank' rel='noopener'>%s</a>" % (safe_url(u), e(n)) for n, u in h["links"]))
     return "<section class='card'>%s</section>" % "".join(rows)
@@ -450,7 +490,7 @@ CSS = """:root{--bg:#fff;--fg:#1a1a1a;--card:#f6f6f6;--mut:#666;--up:#0a8f4d;--t
 body{background:var(--bg);color:var(--fg);font:16px/1.7 Tahoma,Vazirmatn,sans-serif;margin:0;padding:16px;max-width:900px;margin-inline:auto}
 .card{background:var(--card);border-radius:10px;padding:12px 16px;margin:14px 0}h2{margin:.2em 0}h3{margin:.6em 0 .2em;font-size:1em}
 .up{color:var(--up)}.meta,.desc,small{color:var(--mut)}.tag{background:var(--tag);border-radius:6px;padding:1px 8px;font-size:.85em}
-.warn{color:var(--warn)}a{color:inherit}ul{margin:.2em 0;padding-inline-start:1.2em}.note{color:var(--mut);font-size:.9em}"""
+.warn{color:var(--warn)}a{color:inherit}ul{margin:.2em 0;padding-inline-start:1.2em}.note{color:var(--mut);font-size:.9em}.orig{display:block;text-align:left;color:var(--mut);font-size:.8em}"""
 
 
 def build_report(hits, cfg, date_label, generated_at):

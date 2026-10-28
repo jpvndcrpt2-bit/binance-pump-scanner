@@ -107,6 +107,18 @@ async function coingecko(base, api, sleep) {
   } catch (e) { return null; }
 }
 
+const GT = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=fa&dt=t&q=';
+/* Persian translation (unofficial Google endpoint). Returns null if already Persian, empty or failed. */
+async function translateFa(text, api) {
+  text = String(text || '').trim();
+  if (!text || /[\u0600-\u06FF]/.test(text)) return null;
+  try {
+    const d = await api(GT + encodeURIComponent(text.slice(0, 900)));
+    const out = d[0].map((seg) => (seg && seg[0]) || '').join('').trim();
+    return out || null;
+  } catch (e) { return null; }
+}
+
 function makeTags(h, cg, cfg, nowMs) {
   const t = [];
   if (h.onboard && nowMs - h.onboard < 14 * 86400000) t.push('لیست جدید در فیوچرز');
@@ -140,7 +152,7 @@ const fmtUsd = (x) => {
 
 if (typeof module !== 'undefined') {
   module.exports = { pct, cleanBase, evaluate, prefilter, scan, futuresContext, coingecko, makeTags, searchLinks,
-                     mapLimit, dayStartMs, fmtUsd, DEFAULTS };
+                     mapLimit, dayStartMs, fmtUsd, translateFa, DEFAULTS };
 }
 
 // ---------------------------------------------------------------- browser UI
@@ -208,7 +220,8 @@ if (typeof document !== 'undefined') {
     if (cg) {
       c.append(el('p', null, el('b', null, cg.name), cg.rank ? ` (رتبه ${cg.rank})` : '', ` · مارکت‌کپ: $${fmtUsd(cg.mcap)}`,
         cg.categories.length ? ' · دسته‌ها: ' + cg.categories.join('، ') : ''));
-      if (cg.description) c.append(el('p', { class: 'desc' }, cg.description));
+      if (cg.description) c.append(el('p', { class: 'desc' }, cg.descriptionFa || cg.description,
+        cg.descriptionFa ? el('span', { class: 'orig', dir: 'ltr' }, cg.description) : null));
       if (cg.ambiguous) c.append(el('p', { class: 'warn' }, 'نمادهای هم‌نام: ' + cg.others.join('، ')));
     }
     c.append(el('p', { class: 'links' }, searchLinks(h.base, cg).flatMap(([n, u], i) => [i ? ' · ' : '', el('a', { href: u }, n)])));
@@ -230,6 +243,10 @@ if (typeof document !== 'undefined') {
         const cg = await coingecko(h.base, api, sleep);
         cache.get(h.base).cg = cg;
         if (myRun === runId) refreshCard(h, cfg);
+        if (cg && cg.description) {
+          cg.descriptionFa = await translateFa(cg.description, api);
+          if (myRun === runId) refreshCard(h, cfg);
+        }
         await sleep(2500);
       });
     }

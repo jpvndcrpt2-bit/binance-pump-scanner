@@ -86,5 +86,11 @@ const api = async (url) => {
   const f = await A.futuresContext(cfg, async (u) => (u.includes('premium') ? { lastFundingRate: '0.0025' }
     : [{ sumOpenInterestValue: '100' }, { sumOpenInterestValue: '180' }]), 'AINUSDT');
   assert.deepStrictEqual(f, { fundingPct: 0.25, oiChangePct: 80 });
+  // translation
+  const gt = async () => [[['سلام ', 'hello ', null, null, 1], ['دنیا', 'world', null, null, 1]], null, 'en'];
+  assert.strictEqual(await A.translateFa('hello world', gt), 'سلام دنیا');
+  assert.strictEqual(await A.translateFa('سلام', gt), null);
+  assert.strictEqual(await A.translateFa('', gt), null);
+  assert.strictEqual(await A.translateFa('x', async () => { throw new Error('cors'); }), null);
   console.log('web logic tests OK');
 })().catch((e) => { console.error(e); process.exit(1); });
