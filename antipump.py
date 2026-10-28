@@ -18,6 +18,7 @@ import os
 import random
 import statistics
 import sys
+import threading
 import time
 import concurrent.futures as cf
 
@@ -99,7 +100,35 @@ def fetch_hourly(base, symbol, start_ms, end_ms, get):
     return [_bar(r) for r in get(url)]
 
 
+class Pacer:
+    """Shared minimum gap between requests, so 4 threads together stay under Binance's weight limit."""
+
+    def __init__(self, interval):
+        self.interval, self.lock, self.next = interval, threading.Lock(), 0.0
+
+    def wait(self):
+        with self.lock:
+            now = time.monotonic()
+            delay = max(0.0, self.next - now)
+            self.next = max(now, self.next) + self.interval
+        if delay:
+            time.sleep(delay)
+
+
+def progress(log, label, done, total, t0, extra=""):
+    el = time.monotonic() - t0
+    eta = el / done * (total - done) if done else 0
+    log("  %s %d/%d (%.0f%%)  elapsed %dm%02ds  ETA ~%dm%02ds %s" % (
+        label, done, total, 100.0 * done / max(1, total), el // 60, el % 60, eta // 60, eta % 60, extra))
+
+
 def collect(args, get=pump.fetch_json, now=None, log=print):
+    pacer = Pacer(getattr(args, "pace", 0.0))
+    raw_get = get
+
+    def get(url, **kw):                                   # every Binance call goes through the pacer
+        pacer.wait()
+        return raw_get(url)
     now_ms = int((now or dt.datetime.now(dt.timezone.utc)).timestamp() * 1000)
     cfg = {"binance_base": args.base}
     syms = pump.list_symbols(cfg, get)
@@ -112,12 +141,17 @@ def collect(args, get=pump.fetch_json, now=None, log=print):
         for e in evs:
             e["base"], e["onboard"] = s["base"], s["onboard"]
         return evs
+    t0, done = time.monotonic(), 0
+    log("step 1/2: daily candles of every contract (about %d requests, paced)..." % len(syms))
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
         for fut in cf.as_completed([ex.submit(work, s) for s in syms]):
+            done += 1
             try:
                 events.extend(fut.result())
             except Exception:
                 errs += 1
+            if done % 25 == 0 or done == len(syms):
+                progress(log, "daily", done, len(syms), t0, "events so far: %d, errors: %d" % (len(events), errs))
     if syms and errs > len(syms) / 2:
         raise pump.ApiError("more than half of the daily downloads failed")
     events.sort(key=lambda e: e["day_ms"])
@@ -126,9 +160,13 @@ def collect(args, get=pump.fetch_json, now=None, log=print):
     def hourly(e):
         e["bars"] = fetch_hourly(args.base, e["symbol"], e["day_ms"] - DAY, e["day_ms"] + (2 + args.hold_days) * DAY, get)
         return e
-    ok = []
+    ok, t0, done = [], time.monotonic(), 0
+    log("step 2/2: hourly candles around each event...")
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
         for fut in cf.as_completed([ex.submit(hourly, e) for e in events]):
+            done += 1
+            if done % 25 == 0 or done == len(events):
+                progress(log, "hourly", done, len(events), t0)
             try:
                 e = fut.result()
                 if len(e["bars"]) >= 48:
@@ -601,6 +639,7 @@ def build_parser():
     c.add_argument("--min-vol", type=float, default=500000)
     c.add_argument("--hold-days", type=int, default=10)
     c.add_argument("--workers", type=int, default=4)
+    c.add_argument("--pace", type=float, default=0.35, help="min seconds between requests (rate-limit safety)")
     s = sub.add_parser("study")
     common(s)
     b = sub.add_parser("backtest")

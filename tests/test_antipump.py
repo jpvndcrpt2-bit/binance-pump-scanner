@@ -10,6 +10,7 @@ import os
 import random
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -269,7 +270,7 @@ class EndToEnd(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             data = os.path.join(d, "data", "events.json")
             out = os.path.join(d, "out")
-            args = A.build_parser().parse_args(["collect", "--data", data, "--workers", "2"])
+            args = A.build_parser().parse_args(["collect", "--data", data, "--workers", "2", "--pace", "0"])
             evs = A.collect(args, fake_get, NOW, log=lambda *a: None)
             self.assertEqual(len(evs), 1)                                  # one closed >=50% day; low-volume & today excluded
             self.assertEqual(evs[0]["symbol"], "AAAUSDT")
@@ -302,6 +303,21 @@ class EndToEnd(unittest.TestCase):
             code, o = run("predict", *base, "--change", "60", "--hours", "4")
             self.assertEqual(code, 0, o)
             self.assertIn("95%", o)
+
+    def test_collect_reports_progress_and_paces(self):
+        with tempfile.TemporaryDirectory() as d:
+            lines = []
+            args = A.build_parser().parse_args(["collect", "--data", os.path.join(d, "e.json"), "--workers", "2", "--pace", "0"])
+            A.collect(args, fake_get, NOW, log=lines.append)
+            text = "\n".join(lines)
+            self.assertIn("step 1/2", text)
+            self.assertIn("daily 2/2 (100%)", text)
+            self.assertIn("hourly 1/1", text)
+        p = A.Pacer(0.05)
+        t0 = time.monotonic()
+        for _ in range(4):
+            p.wait()
+        self.assertGreaterEqual(time.monotonic() - t0, 0.14)               # 3 gaps of 0.05s between 4 calls
 
     def test_predict_symbol_live_state(self):
         def get(url, **kw):
